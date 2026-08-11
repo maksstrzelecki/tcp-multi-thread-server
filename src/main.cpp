@@ -7,6 +7,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+
+
+// what next: Improve comunication via socket, create http parser
 
 class ThreadPool {
 public:
@@ -60,6 +64,8 @@ private:
 };
 
 
+
+
 int main() {
     int server_fd;
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -67,10 +73,24 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    sockaddr_in address{};
+
+    int opt = 1;
+    if (setsockopt(server_fd,
+                SOL_SOCKET,
+                SO_REUSEADDR,
+                &opt,
+                sizeof(opt)) < 0) {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+
+    sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_addr.s_addr = inet_addr("0.0.0.0");
     address.sin_port = htons(8080);
+
 
 
     if (bind(server_fd, (sockaddr*)&address, sizeof(address)) < 0) {
@@ -94,23 +114,67 @@ int main() {
         socklen_t client_size = sizeof(client);
 
         int client_fd;
-        if ((client_fd = accept(server_fd, (sockaddr*)&client, &client_size)) < 0)
+        if ((client_fd = accept(server_fd, (sockaddr*)&client, &client_size)) < 0) {
             perror("accept");
             break;
+        }
 
         pool.add_task([client_fd] {
+
+
+            // http reader and parser
             char buffer[1024];
             memset(buffer, 0, sizeof(buffer));
 
-            std::cout << "Client\n";
+            std::string header;
 
-            int recv_bytes;
-            while ((recv_bytes = recv(client_fd, buffer, sizeof(buffer), 0)) > 0) {
-                std::string message(buffer, recv_bytes);
-                std::cout << message;
+            while (true)
+            {
+                ssize_t recv_bytes = recv(client_fd, buffer, sizeof(buffer), 0);
+
+                if (recv_bytes < 0) {
+                    perror("recv");
+                    break;
+                }
+
+                if (recv_bytes == 0) {
+                    // client closed connection
+                    break;
+                }
+
+                header.append(buffer, recv_bytes);
+
+                if (header.find("\r\n\r\n") != std::string::npos) {
+                    break;
+                }
+            }
+            size_t header_end = header.find("\r\n\r\n");
+            std::string header_part = header.substr(0, header_end + 4);
+            std::string body_part = header.substr(header_end + 4);
+
+            // get list of headers
+            std::vector<std::string> headers;
+
+            size_t begin = 0;
+            while (header_part.find("\r\n", begin) != std::string::npos) {
+                size_t end = header_part.find("\r\n", begin);
+                headers.push_back(header_part.substr(begin, end - begin));
+
+                begin = end + 2;
             }
 
-            std::string response = "Hello from server\n";
+
+            // response layer
+
+            std::string body = "Hello from backend";
+
+            std::string response =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                "Connection: close\r\n"
+                "\r\n" +
+                body;
 
             int sent_bytes_overall = 0;
             int sent_bytes;
