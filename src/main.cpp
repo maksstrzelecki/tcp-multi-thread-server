@@ -10,7 +10,7 @@
 #include <arpa/inet.h>
 
 
-// what next: Improve comunication via socket, create http parser
+// what next: HTTP parser class, detiled to handle more advanced http request like post, put and so on
 
 class ThreadPool {
 public:
@@ -88,7 +88,7 @@ int main() {
     memset(&address, 0, sizeof(address));
 
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = inet_addr("0.0.0.0");
+    address.sin_addr.s_addr = inet_addr("192.168.0.134");
     address.sin_port = htons(8080);
 
 
@@ -166,7 +166,12 @@ int main() {
 
             // response layer
 
-            std::string body = "Hello from backend";
+            std::string body = "Hello this is maks strzelecki's server\n\n";
+
+            for (const std::string& s : headers) {
+                body += s;
+                body += "\n";
+            }
 
             std::string response =
                 "HTTP/1.1 200 OK\r\n"
@@ -175,6 +180,7 @@ int main() {
                 "Connection: close\r\n"
                 "\r\n" +
                 body;
+                            
 
             int sent_bytes_overall = 0;
             int sent_bytes;
