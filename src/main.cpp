@@ -64,6 +64,99 @@ private:
 };
 
 
+class HttpRequest {
+public:
+    std::string method;
+    std::string path;
+    std::string version;
+    std::unordered_map<std::string, std::string> headers;
+    std::string body;
+
+    HttpRequest(int client_fd) : _client_fd(client_fd) {
+        memset(_buffer, 0, sizeof(_buffer));
+    }
+
+    void processRequest() {
+        while (true)
+            {
+                ssize_t recv_bytes = recv(
+                    _client_fd,
+                    _buffer, 
+                    sizeof(_buffer),
+                    0
+                );
+
+                if (recv_bytes < 0) {
+                    perror("recv");
+                    break;
+                }
+
+                // client closed connection
+                if (recv_bytes == 0) break;
+
+                _request.append(_buffer, recv_bytes);
+
+                if (_request.find("\r\n\r\n") != std::string::npos) break;
+
+            }
+            size_t header_end = _request.find("\r\n\r\n");
+            std::string header_part = _request.substr(0, header_end + 4);
+            std::string body_part = _request.substr(header_end + 4);
+
+            // get list of headers
+            size_t begin = 0;
+            while (header_part.find("\r\n", begin) != std::string::npos) {
+                size_t end = header_part.find("\r\n", begin);
+                _headers.push_back(header_part.substr(begin, end - begin));
+
+                begin = end + 2;
+            }
+
+        // getting method
+        begin = 0;
+        while (_headers[0][begin] != ' ') {
+            method.push_back(_headers[0][begin]);
+            begin++;
+        }
+        begin++;
+        // path
+        while (_headers[0][begin] != ' ') {
+            path.push_back(_headers[0][begin]);
+            begin++;
+        }
+        begin++;
+        // version
+        while (begin < _headers[0].size()) {
+            version.push_back(_headers[0][begin]);
+            begin++;
+        }
+
+        // extracting headers
+        for (size_t i = 1; i < _headers.size(); i++) {
+            size_t colon = _headers[i].find(':');
+
+            if (colon == std::string::npos) {
+                continue;
+            }
+
+            std::string key = _headers[i].substr(0, colon);
+            std::string value = _headers[i].substr(colon + 1);
+
+            if (!value.empty() && value[0] == ' ') {
+                value.erase(0, 1);
+            }
+
+            headers[key] = value;
+        }
+    }
+
+private:
+    int _client_fd;
+    char _buffer[1024];
+    std::string _request;
+    std::vector<std::string> _headers;
+};
+
 
 
 int main() {
@@ -121,57 +214,16 @@ int main() {
 
         pool.add_task([client_fd] {
 
-
-            // http reader and parser
-            char buffer[1024];
-            memset(buffer, 0, sizeof(buffer));
-
-            std::string header;
-
-            while (true)
-            {
-                ssize_t recv_bytes = recv(client_fd, buffer, sizeof(buffer), 0);
-
-                if (recv_bytes < 0) {
-                    perror("recv");
-                    break;
-                }
-
-                if (recv_bytes == 0) {
-                    // client closed connection
-                    break;
-                }
-
-                header.append(buffer, recv_bytes);
-
-                if (header.find("\r\n\r\n") != std::string::npos) {
-                    break;
-                }
-            }
-            size_t header_end = header.find("\r\n\r\n");
-            std::string header_part = header.substr(0, header_end + 4);
-            std::string body_part = header.substr(header_end + 4);
-
-            // get list of headers
-            std::vector<std::string> headers;
-
-            size_t begin = 0;
-            while (header_part.find("\r\n", begin) != std::string::npos) {
-                size_t end = header_part.find("\r\n", begin);
-                headers.push_back(header_part.substr(begin, end - begin));
-
-                begin = end + 2;
-            }
-
+            HttpRequest request(client_fd);
+            request.processRequest();
 
             // response layer
+            std::string body =
+                "Method: " + request.method + "\n" +
+                "Path: " + request.path + "\n" +
+                "Version: " + request.version + "\n";
 
-            std::string body = "Hello this is maks strzelecki's server\n\n";
-
-            for (const std::string& s : headers) {
-                body += s;
-                body += "\n";
-            }
+            body += "Host: " + request.headers["Host"] + "\n";
 
             std::string response =
                 "HTTP/1.1 200 OK\r\n"
