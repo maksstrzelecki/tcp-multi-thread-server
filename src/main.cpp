@@ -8,13 +8,18 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <vector>
+#include <unordered_map>
+#include <cstring>
+#include <cstdlib>
+#include <sstream>
 
-
-// what next: HTTP parser class, detiled to handle more advanced http request like post, put and so on
 
 class ThreadPool {
 public:
     ThreadPool(size_t threads_num = std::thread::hardware_concurrency()) {
+
+        if (threads_num == 0) threads_num = 4;
         for (size_t i = 0; i < threads_num; ++i) {
             threads_.emplace_back([this] {
                 while (true) {
@@ -77,67 +82,55 @@ public:
     }
 
     void processRequest() {
-        while (true)
-            {
-                ssize_t recv_bytes = recv(
-                    _client_fd,
-                    _buffer, 
-                    sizeof(_buffer),
-                    0
-                );
+        while (true) {
+            ssize_t recv_bytes = recv(
+                _client_fd,
+                _buffer, 
+                sizeof(_buffer),
+                0
+            );
 
-                if (recv_bytes < 0) {
-                    perror("recv");
-                    break;
-                }
-
-                // client closed connection
-                if (recv_bytes == 0) break;
-
-                _request.append(_buffer, recv_bytes);
-
-                if (_request.find("\r\n\r\n") != std::string::npos) break;
-
-            }
-            size_t header_end = _request.find("\r\n\r\n");
-            std::string header_part = _request.substr(0, header_end + 4);
-            std::string body_part = _request.substr(header_end + 4);
-
-            // get list of headers
-            size_t begin = 0;
-            while (header_part.find("\r\n", begin) != std::string::npos) {
-                size_t end = header_part.find("\r\n", begin);
-                _headers.push_back(header_part.substr(begin, end - begin));
-
-                begin = end + 2;
+            if (recv_bytes < 0) {
+                perror("recv");
+                break;
             }
 
-        // getting method
-        begin = 0;
-        while (_headers[0][begin] != ' ') {
-            method.push_back(_headers[0][begin]);
-            begin++;
-        }
-        begin++;
-        // path
-        while (_headers[0][begin] != ' ') {
-            path.push_back(_headers[0][begin]);
-            begin++;
-        }
-        begin++;
-        // version
-        while (begin < _headers[0].size()) {
-            version.push_back(_headers[0][begin]);
-            begin++;
+            // client closed connection
+            if (recv_bytes == 0) break;
+
+            _request.append(_buffer, recv_bytes);
+
+            // check if request is not empty
+            if (_request.find("\r\n\r\n") != std::string::npos) break;
+
         }
 
-        // extracting headers
+        size_t header_end = _request.find("\r\n\r\n");
+        if (header_end == std::string::npos) return;
+
+        std::string header_part = _request.substr(0, header_end + 4);
+        std::string body_part = _request.substr(header_end + 4);
+
+        // header string -> vector of single headers conversion
+        size_t begin = 0;
+        while (header_part.find("\r\n", begin) != std::string::npos) {
+            size_t end = header_part.find("\r\n", begin);
+            _headers.push_back(header_part.substr(begin, end - begin));
+
+            begin = end + 2;
+        }
+
+        // extracting http method, path and version
+        if (_headers.empty()) return;
+        std::istringstream request_line(_headers[0]);
+        request_line >> method >> path >> version;
+        if (method.empty() || path.empty() || version.empty()) return;
+
+        // extracting the rest of headers
         for (size_t i = 1; i < _headers.size(); i++) {
             size_t colon = _headers[i].find(':');
 
-            if (colon == std::string::npos) {
-                continue;
-            }
+            if (colon == std::string::npos) continue;
 
             std::string key = _headers[i].substr(0, colon);
             std::string value = _headers[i].substr(colon + 1);
@@ -181,7 +174,7 @@ int main() {
     memset(&address, 0, sizeof(address));
 
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = inet_addr("192.168.0.134");
+    address.sin_addr.s_addr = inet_addr("0.0.0.0"); // or any other host ip address
     address.sin_port = htons(8080);
 
 
@@ -196,7 +189,6 @@ int main() {
         return 1;
     }
 
-    // creating a thread pool
     ThreadPool pool;
 
     std::cout << "Server listening on port 8080\n";
